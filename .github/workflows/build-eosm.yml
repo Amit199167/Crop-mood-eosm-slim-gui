@@ -1,0 +1,84 @@
+name: Build EOS M
+run-name: Build EOS M
+
+on:
+  push:
+    branches:
+      - eosm-slim-gui
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Install Python 2 (Required for ML build scripts)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python2
+
+      - name: Generate placeholder module info (avoids needing Python 2)
+        run: |
+          for dir in modules/*/; do
+            if [ -f "${dir}Makefile" ]; then
+              printf '#define MODULE_STRINGS() \\\n    MODULE_STRINGS_START() \\\n    MODULE_STRINGS_END()\n' > "${dir}module_strings.h"
+              touch "${dir}module_strings.h"
+            fi
+          done
+
+      - name: Cache ARM toolchain
+        id: cache-toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/gcc-arm-none-eabi-5_4-2016q3
+          key: arm-toolchain-5_4-2016q3
+
+      - name: Download ARM toolchain
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        run: |
+          cd ~
+          wget -q https://launchpad.net/gcc-arm-embedded/5.0/5-2016-q3-update/+download/gcc-arm-none-eabi-5_4-2016q3-20160926-linux.tar.bz2
+          tar xjf gcc-arm-none-eabi-5_4-2016q3-20160926-linux.tar.bz2
+
+      - name: Add toolchain to PATH
+        run: echo "$HOME/gcc-arm-none-eabi-5_4-2016q3/bin" >> "$GITHUB_PATH"
+
+      - name: Check compiler
+        run: arm-none-eabi-gcc --version
+
+      - name: Build EOS M platform + modules + package zip
+        run: make -C platform/EOSM.202 zip SHELL=/bin/bash
+
+      - name: Verify build outputs
+        run: |
+          set -euo pipefail
+          ls -lh platform/EOSM.202/autoexec.bin
+          ls -lh platform/EOSM.202/magiclantern-*.zip
+          zipfile=$(ls platform/EOSM.202/magiclantern-*.zip)
+          for mod in crop_rec.mo dual_iso.mo hdmi_out.mo mlv_lite.mo mlv_play.mo mlv_snd.mo sd_uhs.mo file_man.mo bench.mo; do
+            if ! unzip -l "$zipfile" | grep -q "$mod"; then
+              echo "Missing from zip: $mod"
+              unzip -l "$zipfile" | grep '\.mo$' || true
+              exit 1
+            fi
+            echo "OK: $mod"
+          done
+          if unzip -l "$zipfile" | grep -E 'lua\.mo|selftest\.mo|arkanoid\.mo'; then
+            echo "Unexpected slim module in zip"
+            exit 1
+          fi
+
+      - name: Upload autoexec.bin
+        uses: actions/upload-artifact@v4
+        with:
+          name: autoexec.bin
+          path: platform/EOSM.202/autoexec.bin
+          if-no-files-found: error
+
+      - name: Upload full Magic Lantern zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: magiclantern-eosm-zip
+          path: platform/EOSM.202/magiclantern-*.zip
+          if-no-files-found: error
