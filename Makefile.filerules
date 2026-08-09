@@ -1,0 +1,86 @@
+
+#
+# generate dependencies
+#
+COBJS := $(filter %.o, $(ML_OBJS-y))
+DEPS  := $(COBJS:.o=.d)
+-include $(DEPS)
+
+all::
+
+#
+#
+# file type rules
+#
+#
+
+%.i: %.c
+	$(call build,CPP,$(CC) $(DEPFLAGS_I) $(CFLAGS) -E -o $@ $<)
+%.i: $(PLATFORM_DIR)/%.c
+	$(call build,CPP,$(CC) $(DEPFLAGS_I) $(CFLAGS) -E -o $@ $<)
+%.i: $(SRC_DIR)/%.c
+	$(call build,CPP,$(CC) $(DEPFLAGS_I) $(CFLAGS) -E -o $@ $<)
+
+ifeq ($(PREPRO),y)
+# save preprocessed C files (.c -> .i -> .o)
+%.o: %.i %.t
+	$(call build,CC,$(CC) $(CFLAGS) -c -o $@ $<)
+else
+# classic compilation (.c -> .o)
+%.o: %.c
+	$(call build,CC,$(CC) $(DEPFLAGS_O) $(CFLAGS) -c -o $@ $<)
+%.o: $(PLATFORM_DIR)/%.c
+	$(call build,CC,$(CC) $(DEPFLAGS_O) $(CFLAGS) -c -o $@ $<)
+%.o: $(SRC_DIR)/%.c
+	$(call build,CC,$(CC) $(DEPFLAGS_O) $(CFLAGS) -c -o $@ $<)
+endif
+
+%.o: %.S
+	$(call build,AS,$(CC) $(AFLAGS) -c -o $@ $<)
+%.o: $(PLATFORM_DIR)/%.S
+	$(call build,AS,$(CC) $(AFLAGS) -c -o $@ $<)
+%.o: $(SRC_DIR)/%.S
+	$(call build,AS,$(CC) $(AFLAGS) -c -o $@ $<)
+
+ifeq ($(STRICT),y)
+CLANG_FILTER=cat
+else
+CLANG_FILTER=grep -v "reading variable"
+endif
+
+# fake target: check thread safety with clang
+# ignore read warnings for now (assume one writer and multiple readers are fine)
+%.t: %.i
+	$(call build,CLANG,clang -fsyntax-only -Wno-everything -Wthread-safety \
+	-target armv5-none-eabi -mcpu=arm946e-s \
+	-fno-caret-diagnostics \
+	 $< 2>&1 | $(CLANG_FILTER) || true)
+
+%.s: %.c
+	$(call build,CC -S,$(CC) $(CFLAGS) -S -o $@ $<)
+
+%.sym: %
+	$(call build,SYMBOLS,$(READELF) -sW $< | $(GREP) GLOBAL | $(GREP) -v " UND " | $(GREP) -E 'FUNC|OBJECT|ABS|NOTYPE' | $(AWK) "{print \$$2 \" \" \$$8;}" | $(GREP) -v '^ ' | $(GREP) -v __config_ | $(GREP) -v -E ' _[a-zA-Z]' | sort > $@)
+
+autoexec.bin: autoexec $(XOR_CHK)
+	$(call build,OBJCOPY,$(OBJCOPY) -O binary $< $@)
+	$(call build,XOR_CHK,$(XOR_CHK) $@)
+autoexec-fir.bin: autoexec-fir $(XOR_CHK)
+	$(call build,OBJCOPY,$(OBJCOPY) -O binary $< $@)
+	$(call build,XOR_CHK,$(XOR_CHK) $@)
+%.bin: %
+	$(call build,OBJCOPY,$(OBJCOPY) -O binary $< $@)
+	$(call build,STAT,$(STAT_CMD) $@)
+%.rsc: %
+	$(call build,LD,$(LD) -r -b binary -o $@ $<)
+
+%-stubs.S: %.map
+	perl -ne > $@ < $< 'BEGIN { print "#define SYM(a,n) n=a; .global n;\n" } s/[\r\n]//g; s/^\s*0001:([0-9A-Fa-f]+)\s+([^\s]+)$$/SYM(0x\1,\2)\n/ and print;'
+
+%.dis: %.bin
+	$(OBJDUMP) \
+		-b binary \
+		-m arm \
+		-D \
+		$< \
+	> $@
