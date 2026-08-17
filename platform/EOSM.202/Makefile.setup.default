@@ -1,0 +1,5 @@
+#Makefile for EOS M
+
+TOP_DIR=../..
+ML_AF_PATTERNS_OBJ = n
+INSTALL_SLIM_SCRIPTS = 1

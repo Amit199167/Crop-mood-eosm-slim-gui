@@ -1,0 +1,7 @@
+Roboto Thin source font used to generate ../roboto-thin.rbf.
+
+Source: Android Open Source Project, platform/external/roboto-fonts,
+Roboto-Thin.ttf, revision f5cf79102af594c746627b392b4f98eedd254571.
+
+Roboto is distributed under the Apache License, Version 2.0.
+The generated bitmap font is included only for Magic Lantern's Slim UI.
